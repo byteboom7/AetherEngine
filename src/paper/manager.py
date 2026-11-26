@@ -225,8 +225,10 @@ class ExperimentManager:
         engine: Any | None = None,
         instruments: tuple[Instrument, ...] = (),
         feed_stats: FeedStats | None = None,
+        max_running: int | None = None,
     ) -> None:
         self.store = store
+        self.max_running = max_running
         self.data_dir = data_dir
         self.models_dir = models_dir
         self.engine = engine
@@ -271,6 +273,10 @@ class ExperimentManager:
     # ---- lifecycle -------------------------------------------------------------
 
     async def start(self, cfg: ExperimentConfig) -> str:
+        if self.max_running is not None and len(self._active) >= self.max_running:
+            raise RuntimeError(
+                f"{self.max_running} experiment(s) already running; wait for one to finish or stop it"
+            )
         if cfg.model not in self.models():
             raise ValueError(f"Model {cfg.model!r} not found in {self.models_dir}")
         predictor = SignalPredictor(self.models_dir / cfg.model, cfg.signal_threshold)

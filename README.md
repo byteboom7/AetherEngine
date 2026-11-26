@@ -190,6 +190,22 @@ The paper broker enforces institutional market mechanics:
 
 ---
 
+## Deploying the Lab on Railway
+
+The repo ships a `Dockerfile` and `railway.json` that host the **replay-only** Paper Trading Lab
+(`--no-feed`). No Dhan credentials go to the server; visitors replay the recorded sessions in `data/`.
+
+1. In Railway, create a project from this GitHub repo. It builds the `Dockerfile` automatically.
+2. Under **Variables**, set `LAB_PASSWORD` (the whole portal sits behind basic auth: any username, this
+   password). Optionally set `MAX_RUNNING` (experiments allowed at once, default 2).
+3. Optional: add a **Volume** mounted at `/app/experiments` so experiment results survive redeploys.
+4. Under **Settings → Networking**, click **Generate Domain** and open the URL.
+
+One replay over all five sessions peaks at roughly 1.6 GB of RAM, so give the service at least 2 GB
+(more if you raise `MAX_RUNNING`). `/healthz` is left open for Railway's health check.
+
+---
+
 ## Directory Layout
 
 ```

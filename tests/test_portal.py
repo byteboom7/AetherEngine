@@ -124,6 +124,36 @@ def test_stop_and_delete(recorded_dir, models_dir, tmp_path):
     assert not list((tmp_path / "e").iterdir())
 
 
+def test_password_protects_everything_but_healthz(recorded_dir, models_dir, tmp_path):
+    async def scenario():
+        manager = ExperimentManager(ExperimentStore(tmp_path / "e"), recorded_dir, models_dir)
+        async with _client(create_app(manager, password="s3cret")) as http:
+            return (
+                (await http.get("/healthz")).status_code,
+                (await http.get("/")).status_code,
+                (await http.get("/api/meta", auth=("anyone", "wrong"))).status_code,
+                (await http.get("/api/meta", auth=("anyone", "s3cret"))).status_code,
+                (await http.get("/api/meta", headers={"Authorization": "Basic !!!"})).status_code,
+            )
+
+    assert asyncio.run(scenario()) == (200, 401, 401, 200, 401)
+
+
+def test_max_running_caps_concurrent_experiments(recorded_dir, models_dir, tmp_path):
+    async def scenario():
+        manager = ExperimentManager(ExperimentStore(tmp_path / "e"), recorded_dir, models_dir, max_running=1)
+        async with _client(create_app(manager)) as http:
+            first = await http.post("/api/experiments", json=REPLAY | {"days": []})
+            second = await http.post("/api/experiments", json=REPLAY)
+            await http.post(f"/api/experiments/{first.json()['id']}/stop")
+            await _wait_done(http, first.json()["id"])
+            third = await http.post("/api/experiments", json=REPLAY)
+            await _wait_done(http, third.json()["id"])
+            return first.status_code, second.status_code, third.status_code
+
+    assert asyncio.run(scenario()) == (201, 429, 201)
+
+
 def test_live_experiment_on_mock_feed(models_dir, tmp_path, monkeypatch):
     async def scenario():
         async with mock_dhan(hz=100) as (url, received):

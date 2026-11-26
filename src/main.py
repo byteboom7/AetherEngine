@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import signal
 import sys
 import time
@@ -417,8 +418,12 @@ async def run(args: argparse.Namespace, console: Console, events: EventLog) -> N
             engine=engine,
             instruments=config.instruments if config else (),
             feed_stats=client.stats if client else None,
+            max_running=args.max_running,
         )
-        server = make_server(create_app(manager))
+        password = os.environ.get("LAB_PASSWORD") or None
+        if password is None and args.host not in ("127.0.0.1", "localhost", "::1"):
+            logger.warning("Portal is reachable on %s with no LAB_PASSWORD: anyone can use it", args.host)
+        server = make_server(create_app(manager, password))
         server_task = asyncio.create_task(server.serve(sockets=[sock]), name="portal")
         workers.append(asyncio.create_task(manager.autosave(), name="autosave"))
         logger.info("Paper trading lab at %s", portal_url)
@@ -485,6 +490,8 @@ def main() -> None:
     lab.add_argument("--port", type=int, default=8000)
     lab.add_argument("--no-feed", action="store_true", help="portal only, for replay experiments without Dhan")
     lab.add_argument("--experiments-dir", type=Path, default=Path("experiments"))
+    lab.add_argument("--max-running", type=int, default=None,
+                     help="cap on experiments running at once (useful when hosted)")
     lab.add_argument("--models-dir", type=Path, default=Path("."), help="where the portal looks for model files")
     args = parser.parse_args()
     if args.no_feed:

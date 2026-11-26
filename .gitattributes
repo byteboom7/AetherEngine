@@ -1,0 +1,2 @@
+# LightGBM cannot parse CRLF model files; keep them LF on every OS.
+model.txt text eol=lf

@@ -3,19 +3,26 @@
 Served by uvicorn inside the engine's own event loop, so live experiments see
 every feature update with no inter-process hop. Binds to 127.0.0.1 by default:
 the process holds your Dhan token, so do not expose it to a network.
+
+For a hosted replay-only lab (--no-feed), set LAB_PASSWORD to put the whole
+portal behind HTTP basic auth (any username, that password). /healthz stays
+open so the host's health checks work.
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
 import contextlib
+import secrets
 import socket
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Final
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 
 from ..paper.config import ExperimentConfig
 from ..paper.manager import ExperimentManager
@@ -23,8 +30,33 @@ from ..paper.manager import ExperimentManager
 STATIC: Final = Path(__file__).parent / "static"
 
 
-def create_app(manager: ExperimentManager) -> FastAPI:
+def _password_ok(header: str | None, password: str) -> bool:
+    scheme, _, encoded = (header or "").partition(" ")
+    if scheme.lower() != "basic":
+        return False
+    try:
+        _, _, given = base64.b64decode(encoded, validate=True).decode().partition(":")
+    except (binascii.Error, UnicodeDecodeError):
+        return False
+    return secrets.compare_digest(given.encode(), password.encode())
+
+
+def create_app(manager: ExperimentManager, password: str | None = None) -> FastAPI:
     app = FastAPI(title="AetherEngine Paper Trading Lab", docs_url="/api/docs", redoc_url=None)
+
+    if password:
+        @app.middleware("http")
+        async def require_password(request: Request, call_next):
+            if request.url.path == "/healthz" or _password_ok(request.headers.get("authorization"), password):
+                return await call_next(request)
+            return PlainTextResponse(
+                "Password required", status_code=401,
+                headers={"WWW-Authenticate": 'Basic realm="AetherEngine Lab"'},
+            )
+
+    @app.get("/healthz", include_in_schema=False)
+    def healthz() -> dict:
+        return {"ok": True}
 
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
@@ -44,6 +76,8 @@ def create_app(manager: ExperimentManager) -> FastAPI:
             exp_id = await manager.start(cfg)
         except (ValueError, FileNotFoundError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:  # too many experiments already running
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
         return {"id": exp_id}
 
     @app.get("/api/experiments/{exp_id}")
